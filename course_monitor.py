@@ -14,10 +14,14 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 # --- Config ---
+LDAP_USER = os.getenv("IITM_LDAP_USER", "ce23b115")
+LDAP_PASS = os.getenv("IITM_LDAP_PASS", "Vahid@@@2005")
+SMAIL_PASS = os.getenv("SMAIL_PASS", "shcy dsbp imof eywa")
+
 PROXY = {
     "server": "https://remote.iitm.ac.in:8372",
-    "username": os.getenv("IITM_LDAP_USER", "ce23b115"),
-    "password": os.getenv("IITM_LDAP_PASS", "Vahid@@@2005"),
+    "username": LDAP_USER,
+    "password": LDAP_PASS,
 }
 FIREFOX_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 STATE_FILE = Path(__file__).parent / "last_gs_state.json"
