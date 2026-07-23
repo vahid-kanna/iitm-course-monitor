@@ -1,0 +1,40 @@
+name: IITM Course Monitor
+
+on:
+  schedule:
+    # Runs every 7 minutes (safe budget allocation)
+    - cron: '*/7 * * * *'
+  workflow_dispatch: # Allows manual run path from GitHub Actions tab
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache State
+        uses: actions/cache@v4
+        with:
+          path: last_gs_state.json
+          # Use a static cache key but always save updated state post-run
+          key: ${{ runner.os }}-iitm-gs-state-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-iitm-gs-state-
+
+      - name: Install Dependencies
+        run: |
+          pip install playwright
+          playwright install chromium
+
+      - name: Run Script
+        env:
+          IITM_LDAP_USER: ${{ secrets.IITM_LDAP_USER }}
+          IITM_LDAP_PASS: ${{ secrets.IITM_LDAP_PASS }}
+          SMAIL_PASS: ${{ secrets.SMAIL_PASS }}
+        run: python course_monitor.py
