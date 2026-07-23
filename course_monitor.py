@@ -8,7 +8,8 @@ GS (GN-prefixed) courses, and prints available ones.
 Runs as a Hermes cron job every 5 minutes. When a new GS course appears
 with vacancies > 0, it sends an email via himalaya to ce23b115@smail.iitm.ac.in.
 """
-import asyncio, json, os, sys, subprocess
+import asyncio, json, os, sys, subprocess, smtplib
+from email.mime.text import MIMEText
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
