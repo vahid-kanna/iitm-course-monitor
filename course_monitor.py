@@ -284,7 +284,7 @@ async def main():
             alerts = detect_changes(gs_courses, prev_state)
             new_state = save_state(gs_courses)
 
-            force_email = "--force-email" in sys.argv or os.getenv("GITHUB_ACTIONS") == "true"
+            force_email = "--force-email" in sys.argv
             
             # If force-email is set, compile all current course states into an alert
             if force_email:
