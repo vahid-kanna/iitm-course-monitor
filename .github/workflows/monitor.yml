@@ -2,8 +2,8 @@ name: IITM Course Monitor
 
 on:
   schedule:
-    # Runs every 7 minutes (safe budget allocation)
-    - cron: '*/7 * * * *'
+    # Runs every 10 minutes (higher priority execution on GitHub servers)
+    - cron: '*/10 * * * *'
   workflow_dispatch: # Allows manual run path from GitHub Actions tab
 
 jobs:
