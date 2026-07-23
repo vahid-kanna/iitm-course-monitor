@@ -44,12 +44,22 @@ async def login(page):
 
 async def get_elective_courses(page):
     """Navigate to Add/Drop → View Electives iframe and extract courses."""
+    # Wait until __doPostBack is defined
+    try:
+        await page.wait_for_function("typeof __doPostBack === 'function'", timeout=15000)
+    except Exception:
+        # Fallback reload if it failed to load scripts
+        await page.reload()
+        await page.wait_for_load_state("networkidle", timeout=15000)
+        await page.wait_for_function("typeof __doPostBack === 'function'", timeout=15000)
+        
     # Go to Add/Drop page
     await page.evaluate("__doPostBack('ctl00$AddDropCoursesLink','')")
     await page.wait_for_load_state("networkidle", timeout=30000)
     await asyncio.sleep(2)
 
     # Click View Electives to open the modal with iframe
+    await page.wait_for_function("typeof __doPostBack === 'function'", timeout=15000)
     await page.evaluate("__doPostBack('ctl00$MainContent$btnViewAvailablityElec','')")
     await asyncio.sleep(5)
 
