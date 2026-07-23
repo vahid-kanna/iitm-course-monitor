@@ -1,57 +1,28 @@
 """
-IITM Course Vacancy Monitor - GitHub Actions Edition
-======================================================
-Logs into workflow.iitm.ac.in via remote.iitm.ac.in proxy.
-Checks for General Studies (GN) course vacancy changes, ID4101 vacancies, and CE5010 vacancies.
-Sends email alerts via Gmail SMTP (Smail) using GitHub Secrets.
+IITM Course Vacancy Monitor
+============================
+Logs into workflow.iitm.ac.in, navigates to Add/Drop → View Electives,
+reads the iframe listing all elective courses with vacancies, filters for
+GS (GN-prefixed) courses, and prints available ones.
+
+Runs as a Hermes cron job every 5 minutes. When a new GS course appears
+with vacancies > 0, it sends an email via himalaya to ce23b115@smail.iitm.ac.in.
 """
-import os
-import sys
-import json
-import asyncio
-import smtplib
+import asyncio, json, os, sys, subprocess
 from datetime import datetime
 from pathlib import Path
-from email.mime.text import MIMEText
 from playwright.async_api import async_playwright
 
-# --- Inputs from environment (GitHub Secrets) ---
-LDAP_USER = os.getenv("IITM_LDAP_USER")
-LDAP_PASS = os.getenv("IITM_LDAP_PASS")
-SMAIL_PASS = os.getenv("SMAIL_PASS")
-
-if not all([LDAP_USER, LDAP_PASS, SMAIL_PASS]):
-    print("❌ ERROR: Missing required environment secrets (IITM_LDAP_USER, IITM_LDAP_PASS, SMAIL_PASS)")
-    sys.exit(1)
-
+# --- Config ---
 PROXY = {
     "server": "https://remote.iitm.ac.in:8372",
-    "username": LDAP_USER,
-    "password": LDAP_PASS,
+    "username": os.getenv("IITM_LDAP_USER", "ce23b115"),
+    "password": os.getenv("IITM_LDAP_PASS", "Vahid@@@2005"),
 }
 FIREFOX_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 STATE_FILE = Path(__file__).parent / "last_gs_state.json"
-GS_PREFIXES = ["GN", "ID", "CE"]
+GS_PREFIXES = ["GN", "ID", "CE"]  # Course prefixes to monitor
 SPECIFIC_COURSES = ["ID4101", "CE5010"]
-
-
-def send_email_alert(subject, body):
-    """Send email alert via Google SMTP (Smail runs on Google Workspace)."""
-    smtp_user = f"{LDAP_USER}@smail.iitm.ac.in"
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = smtp_user
-    msg["To"] = smtp_user
-
-    try:
-        print("Connecting to SMTP server...")
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
-            server.starttls()
-            server.login(smtp_user, SMAIL_PASS)
-            server.sendmail(smtp_user, [smtp_user], msg.as_string())
-        print("📧 Email alert sent successfully!")
-    except Exception as e:
-        print(f"⚠️ Email sending failed: {e}")
 
 
 async def login(page):
@@ -61,8 +32,8 @@ async def login(page):
     captcha = await page.evaluate("document.getElementById('HiddenCaptcha')?.value || ''")
     if not captcha:
         return False
-    await page.fill("#txtUserName", LDAP_USER)
-    await page.fill("#txtPassword", LDAP_PASS)
+    await page.fill("#txtUserName", PROXY["username"])
+    await page.fill("#txtPassword", PROXY["password"])
     await page.fill("#txtCaptcha", captcha)
     await page.check("#chkRemember")
     await page.click("#Login")
@@ -72,7 +43,17 @@ async def login(page):
 
 
 async def get_elective_courses(page):
-    """Navigate directly to the electives iframe page."""
+    """Navigate to Add/Drop → View Electives iframe and extract courses."""
+    # Go to Add/Drop page
+    await page.evaluate("__doPostBack('ctl00$AddDropCoursesLink','')")
+    await page.wait_for_load_state("networkidle", timeout=30000)
+    await asyncio.sleep(2)
+
+    # Click View Electives to open the modal with iframe
+    await page.evaluate("__doPostBack('ctl00$MainContent$btnViewAvailablityElec','')")
+    await asyncio.sleep(5)
+
+    # Navigate directly to the electives iframe page (faster + more reliable)
     await page.goto(
         "https://workflow.iitm.ac.in/student/ReportPages/ElectiveCoursesViewAddDrop.aspx",
         timeout=30000
@@ -87,6 +68,7 @@ async def get_elective_courses(page):
             const cells = row.querySelectorAll('td');
             if (cells.length >= 5) {
                 const texts = Array.from(cells).map(c => c.innerText?.trim());
+                // Course rows: column 0 is Course No (e.g. AE5510, GN6106)
                 if (texts[0] && /^[A-Z]{2}[0-9]/.test(texts[0])) {
                     results.push({
                         course_no: texts[0],
@@ -126,22 +108,25 @@ def filter_gs_courses(courses):
 def load_previous_state():
     """Load previous scan state."""
     if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
+        return json.loads(STATE_FILE.read_text())
     return {}
 
 
 def save_state(gs_courses):
     """Save current GS course state."""
+    # Use course_no + '_' + slot as unique key to support multiple slots
     state = {f"{c['course_no']}_{c['slot']}": c["vacancies"] for c in gs_courses}
     STATE_FILE.write_text(json.dumps(state, indent=2))
     return state
 
 
 def detect_changes(gs_courses, prev_state):
-    """Detect new courses, changes in vacancy counts, or courses that disappeared."""
+    """Detect new courses, changes in vacancy counts, or courses that disappeared.
+    
+    1. For GN courses (all of them): alert on ANY change in vacancy (including disappearing -> 0).
+    2. For ID4101: alert if vacancies < 20.
+    3. For CE5010: alert if vacancies < 10.
+    """
     alerts = []
     current_keys = set()
     
@@ -155,7 +140,7 @@ def detect_changes(gs_courses, prev_state):
         
         prev_vac_str = prev_state.get(state_key)
         
-        # Fallback: check by cno
+        # Fallback: if not found by state_key, check by cno (for compatibility with old runs)
         if prev_vac_str is None:
             prev_vac_str = prev_state.get(cno)
         
@@ -202,6 +187,7 @@ def detect_changes(gs_courses, prev_state):
         if state_key in current_keys:
             continue
             
+        # Parse course info from key
         if "_" in state_key:
             cno, slot = state_key.split("_", 1)
         else:
@@ -212,6 +198,7 @@ def detect_changes(gs_courses, prev_state):
         except ValueError:
             prev_vac = 0
             
+        # If it was active (>0 vacancies) and now disappeared, it implies vacancies = 0
         if prev_vac > 0:
             if cno.startswith("GN"):
                 alerts.append(f"🔄 GN VACANCY CHANGE: {cno} (Slot: {slot}) has filled to 0 / disappeared (was {prev_vac})")
@@ -223,9 +210,41 @@ def detect_changes(gs_courses, prev_state):
     return alerts
 
 
+def send_email_alert(subject, body):
+    """Send email alert via Google SMTP (Smail runs on Google Workspace)."""
+    smtp_user = f"{LDAP_USER}@smail.iitm.ac.in"
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = smtp_user
+    msg["To"] = smtp_user
+
+    try:
+        print("Connecting to SMTP server...")
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+            server.starttls()
+            server.login(smtp_user, SMAIL_PASS)
+            server.sendmail(smtp_user, [smtp_user], msg.as_string())
+        print("📧 Email alert sent successfully!")
+    except Exception as e:
+        print(f"⚠️ Email sending failed: {e}")
+
+
 async def main():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    if "--test-email" in sys.argv:
+        print(f"[{now}] Processing test email alert...")
+        subject = "IITM Course Monitor: Test Email Notification"
+        body = (
+            "Hi Vahid,\n\n"
+            "This is a test email confirmation from your IITM Course Monitor script.\n"
+            "If you are reading this, the himalaya client is working and connected!\n\n"
+            "Best regards,\n"
+            "IITM Course Monitor Script"
+        )
+        send_email_alert(subject, body)
+        return
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -248,11 +267,27 @@ async def main():
             gs_courses = filter_gs_courses(courses)
             prev_state = load_previous_state()
             alerts = detect_changes(gs_courses, prev_state)
-            save_state(gs_courses)
+            new_state = save_state(gs_courses)
 
+            force_email = "--force-email" in sys.argv
+            
+            # If force-email is set, compile all current course states into an alert
+            if force_email:
+                status_header = f"🔍 MANUAL STATUS CHECK — {now}"
+                status_lines = []
+                for c in gs_courses:
+                    status = f"✅ {c['vacancies']}" if c['vacancies_int'] > 0 else "❌ 0"
+                    status_lines.append(f"  {c['course_no']} | {c['course_name'][:50]} | Slot: {c['slot']} | {status}")
+                status_report = "\n".join(status_lines)
+                
+                # Append to alerts
+                alerts_summary = f"\n\n🚨 ACTIVE CHANGES DETECTED:\n" + "\n".join(alerts) if alerts else "\n\n(No new state changes detected since last check)"
+                alerts = [f"{status_header}\n\nCurrent general studies and tracked electives vacancies:\n{status_report}{alerts_summary}"]
+
+            # --- OUTPUT & EMAIL ALERT ---
             if alerts:
                 alert_text = "\n".join(alerts)
-                subject = "IITM Course Alert: Slot Available!"
+                subject = f"IITM Course Monitor: Live Status Update" if force_email else f"IITM Course Alert: Slot Available!"
                 body = (
                     f"Hi Vahid,\n\n"
                     f"The following general studies or tracked course update(s) were triggered:\n\n"
@@ -265,9 +300,16 @@ async def main():
                 print("=" * 60)
                 print(alert_text)
                 print("=" * 60)
+                print("Sending email alert via himalaya...")
                 send_email_alert(subject, body)
             else:
-                print(f"[{now}] No changes detected. Tracked {len(gs_courses)} courses.")
+                # No change — silent (cron won't send notification for empty output)
+                # But print for manual runs
+                if "--verbose" in sys.argv:
+                    print(f"[{now}] No new GS courses. Total electives: {len(courses)}, GS courses: {len(gs_courses)}")
+                    for c in gs_courses:
+                        status = f"✅ {c['vacancies']}" if c['vacancies_int'] > 0 else "❌ 0"
+                        print(f"  {c['course_no']} | {c['course_name'][:55]} | Slot: {c['slot']} | {status}")
 
         finally:
             await browser.close()
