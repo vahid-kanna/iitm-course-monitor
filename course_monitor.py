@@ -27,7 +27,14 @@ PROXY = {
 FIREFOX_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 STATE_FILE = Path(__file__).parent / "last_gs_state.json"
 GS_PREFIXES = ["GN", "ID", "CE"]  # Course prefixes to monitor
-SPECIFIC_COURSES = ["ID4101", "CE5010"]
+# Exact courses to monitor — only these, no other GN courses
+MONITORED_GN   = {"GN6002", "GN6101", "GN6120"}   # alert on any vacancy change
+THRESHOLD_COURSES = {
+    "CE5010": 10,   # alert when vacancies < 10
+    "ID4101": 20,   # alert when vacancies < 20
+}
+APPEAR_COURSES = {"CE5470"}  # alert the instant it appears with any vacancy > 0
+ALL_WATCHED = MONITORED_GN | set(THRESHOLD_COURSES) | APPEAR_COURSES
 
 
 async def login(page):
@@ -101,21 +108,16 @@ async def get_elective_courses(page):
 
 
 def filter_gs_courses(courses):
-    """Filter for GS (GN-prefixed) courses or the specific target courses."""
+    """Filter only the exact watched courses."""
     gs = []
     for c in courses:
         cno = c["course_no"]
-        is_gn = cno.startswith("GN")
-        is_specific = cno in SPECIFIC_COURSES
-        
-        if not (is_gn or is_specific):
+        if cno not in ALL_WATCHED:
             continue
-            
         try:
             c["vacancies_int"] = int(c["vacancies"])
         except ValueError:
             c["vacancies_int"] = 0
-            
         gs.append(c)
     return gs
 
@@ -128,100 +130,75 @@ def load_previous_state():
 
 
 def save_state(gs_courses):
-    """Save current GS course state."""
-    # Use course_no + '_' + slot as unique key to support multiple slots
+    """Save current watched course state."""
     state = {f"{c['course_no']}_{c['slot']}": c["vacancies"] for c in gs_courses}
     STATE_FILE.write_text(json.dumps(state, indent=2))
     return state
 
 
 def detect_changes(gs_courses, prev_state):
-    """Detect new courses, changes in vacancy counts, or courses that disappeared.
-    
-    1. For GN courses (all of them): alert on ANY change in vacancy (including disappearing -> 0).
-    2. For ID4101: alert if vacancies < 20.
-    3. For CE5010: alert if vacancies < 10.
+    """Detect changes for all watched courses.
+
+    - GN6002, GN6101, GN6120: alert on ANY vacancy change (appear, disappear, count change)
+    - CE5010: alert when vacancies < 10
+    - ID4101: alert when vacancies < 20
+    - CE5470: alert the instant it appears with vacancies > 0
     """
     alerts = []
     current_keys = set()
-    
-    # 1. Process courses that are currently visible
+
     for c in gs_courses:
         cno = c["course_no"]
         slot = c["slot"]
         vac = c["vacancies_int"]
         state_key = f"{cno}_{slot}"
         current_keys.add(state_key)
-        
-        prev_vac_str = prev_state.get(state_key)
-        
-        # Fallback: if not found by state_key, check by cno (for compatibility with old runs)
-        if prev_vac_str is None:
-            prev_vac_str = prev_state.get(cno)
-        
-        # Parse previous vacancy
+
+        prev_vac_str = prev_state.get(state_key) or prev_state.get(cno)
+        prev_vac = None
         if prev_vac_str is not None:
             try:
                 prev_vac = int(prev_vac_str)
             except ValueError:
-                prev_vac = None
-        else:
-            prev_vac = None
-            
-        # Check GN courses
-        if cno.startswith("GN"):
+                pass
+
+        if cno in MONITORED_GN:
             if prev_vac is None:
                 alerts.append(f"🆕 NEW GN COURSE: {cno} — {c['course_name']} | Slot: {slot} | Vacancies: {vac}")
             elif prev_vac != vac:
-                alerts.append(f"🔄 GN VACANCY CHANGE: {cno} — {c['course_name']} | Slot: {slot} | Vacancies: {vac} (was {prev_vac})")
-                
-        # Check ID4101
-        elif cno == "ID4101":
-            threshold = 20
+                alerts.append(f"🔄 GN VACANCY CHANGE: {cno} — {c['course_name']} | Slot: {slot} | {vac} (was {prev_vac})")
+
+        elif cno in APPEAR_COURSES:
+            if (prev_vac is None or prev_vac == 0) and vac > 0:
+                alerts.append(f"🚨 CE5470 APPEARED: Surface Water Hydrology | Slot: {slot} | Vacancies: {vac} — Register NOW!")
+
+        elif cno in THRESHOLD_COURSES:
+            threshold = THRESHOLD_COURSES[cno]
             if vac < threshold:
                 if prev_vac is None:
-                    alerts.append(f"🚨 ID4101 CRITICAL: Vacancies are {vac} (under threshold of {threshold}!)")
+                    alerts.append(f"🚨 {cno} CRITICAL: Vacancies are {vac} (under threshold of {threshold}!)")
                 elif prev_vac >= threshold:
-                    alerts.append(f"🚨 ID4101 FELL BELOW THRESHOLD: Vacancies dropped to {vac} (was {prev_vac})")
+                    alerts.append(f"🚨 {cno} FELL BELOW THRESHOLD: Dropped to {vac} (was {prev_vac})")
                 elif prev_vac != vac:
-                    alerts.append(f"🚨 ID4101 VACANCY UPDATE: Vacancies changed to {vac} (was {prev_vac})")
-                    
-        # Check CE5010
-        elif cno == "CE5010":
-            threshold = 10
-            if vac < threshold:
-                if prev_vac is None:
-                    alerts.append(f"🚨 CE5010 CRITICAL: Vacancies are {vac} (under threshold of {threshold}!)")
-                elif prev_vac >= threshold:
-                    alerts.append(f"🚨 CE5010 FELL BELOW THRESHOLD: Vacancies dropped to {vac} (was {prev_vac})")
-                elif prev_vac != vac:
-                    alerts.append(f"🚨 CE5010 VACANCY UPDATE: Vacancies changed to {vac} (was {prev_vac})")
-                    
-    # 2. Process courses that have disappeared (vacancies dropped to 0)
+                    alerts.append(f"🚨 {cno} VACANCY UPDATE: Changed to {vac} (was {prev_vac})")
+
+    # Courses that disappeared since last check
     for state_key, prev_vac_str in prev_state.items():
         if state_key in current_keys:
             continue
-            
-        # Parse course info from key
-        if "_" in state_key:
-            cno, slot = state_key.split("_", 1)
-        else:
-            cno, slot = state_key, "Unknown"
-            
+        cno, slot = state_key.split("_", 1) if "_" in state_key else (state_key, "?")
         try:
             prev_vac = int(prev_vac_str)
         except ValueError:
             prev_vac = 0
-            
-        # If it was active (>0 vacancies) and now disappeared, it implies vacancies = 0
         if prev_vac > 0:
-            if cno.startswith("GN"):
-                alerts.append(f"🔄 GN VACANCY CHANGE: {cno} (Slot: {slot}) has filled to 0 / disappeared (was {prev_vac})")
-            elif cno == "ID4101" and prev_vac >= 20:
-                alerts.append(f"🚨 ID4101 FELL BELOW THRESHOLD: Course filled to 0 / disappeared (was {prev_vac})")
-            elif cno == "CE5010" and prev_vac >= 10:
-                alerts.append(f"🚨 CE5010 FELL BELOW THRESHOLD: Course filled to 0 / disappeared (was {prev_vac})")
-    
+            if cno in MONITORED_GN:
+                alerts.append(f"🔄 GN FILLED: {cno} (Slot: {slot}) disappeared/filled to 0 (was {prev_vac})")
+            elif cno in THRESHOLD_COURSES and prev_vac >= THRESHOLD_COURSES[cno]:
+                alerts.append(f"🚨 {cno} FELL BELOW THRESHOLD: Filled to 0 (was {prev_vac})")
+            elif cno in APPEAR_COURSES:
+                alerts.append(f"🔄 CE5470 FILLED: Surface Water Hydrology (Slot: {slot}) filled to 0 (was {prev_vac})")
+
     return alerts
 
 
