@@ -90,7 +90,7 @@ async def get_elective_courses(page):
             const cells = row.querySelectorAll('td');
             if (cells.length >= 5) {
                 const texts = Array.from(cells).map(c => c.innerText?.trim());
-                // Course rows: column 0 is Course No (e.g. AE5510, GN6106)
+                // Course rows: column 0 is Course No (e.g. AE5510, CE5010)
                 if (texts[0] && /^[A-Z]{2}[0-9]/.test(texts[0])) {
                     results.push({
                         course_no: texts[0],
