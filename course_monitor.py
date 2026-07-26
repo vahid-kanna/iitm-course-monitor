@@ -33,7 +33,7 @@ THRESHOLD_COURSES = {
     "CE5010": 10,   # alert when vacancies < 10
     "ID4101": 20,   # alert when vacancies < 20
 }
-APPEAR_COURSES = {"CE5470"}  # alert the instant it appears with any vacancy > 0
+APPEAR_COURSES = {"CE5470", "BT6220"}  # alert the instant it appears with any vacancy > 0
 ALL_WATCHED = MONITORED_GN | set(THRESHOLD_COURSES) | APPEAR_COURSES
 
 
@@ -170,7 +170,7 @@ def detect_changes(gs_courses, prev_state):
 
         elif cno in APPEAR_COURSES:
             if (prev_vac is None or prev_vac == 0) and vac > 0:
-                alerts.append(f"🚨 CE5470 APPEARED: Surface Water Hydrology | Slot: {slot} | Vacancies: {vac} — Register NOW!")
+                alerts.append(f"🚨 {cno} APPEARED: {c['course_name']} | Slot: {slot} | Vacancies: {vac} — Register NOW!")
 
         elif cno in THRESHOLD_COURSES:
             threshold = THRESHOLD_COURSES[cno]
@@ -197,7 +197,7 @@ def detect_changes(gs_courses, prev_state):
             elif cno in THRESHOLD_COURSES and prev_vac >= THRESHOLD_COURSES[cno]:
                 alerts.append(f"🚨 {cno} FELL BELOW THRESHOLD: Filled to 0 (was {prev_vac})")
             elif cno in APPEAR_COURSES:
-                alerts.append(f"🔄 CE5470 FILLED: Surface Water Hydrology (Slot: {slot}) filled to 0 (was {prev_vac})")
+                alerts.append(f"🔄 {cno} FILLED: (Slot: {slot}) filled to 0 (was {prev_vac})")
 
     return alerts
 
