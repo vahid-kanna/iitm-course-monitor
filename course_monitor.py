@@ -1,14 +1,19 @@
 """
 IITM Course Vacancy Monitor
 ============================
-Logs into workflow.iitm.ac.in, navigates to Add/Drop → View Electives,
+Logs into workflow.iitm.ac.in, navigates to Add/Drop  View Electives,
 reads the iframe listing all elective courses with vacancies, filters for
 GS (GN-prefixed) courses, and prints available ones.
 
 Runs as a Hermes cron job every 5 minutes. When a new GS course appears
 with vacancies > 0, it sends an email via himalaya to ce23b115@smail.iitm.ac.in.
 """
-import asyncio, json, os, sys, subprocess, smtplib
+import asyncio
+import json
+import os
+import sys
+import subprocess
+import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime
 from pathlib import Path
@@ -27,11 +32,11 @@ PROXY = {
 FIREFOX_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 STATE_FILE = Path(__file__).parent / "last_gs_state.json"
 GS_PREFIXES = ["GN", "ID", "CE"]  # Course prefixes to monitor
-# Exact courses to monitor — only these, no other GN courses
-MONITORED_GN   = {"GN6002", "GN6101", "GN6120"}   # alert on any vacancy change
+# Exact courses to monitor  only these, no other GN courses
+MONITORED_GN = {"GN6002", "GN6101", "GN6120"}  # alert on any vacancy change
 THRESHOLD_COURSES = {
-    "CE5010": 10,   # alert when vacancies < 10
-    "ID4101": 20,   # alert when vacancies < 20
+    "CE5010": 10,  # alert when vacancies < 10
+    "ID4101": 20,  # alert when vacancies < 20
 }
 APPEAR_COURSES = {"CE5470", "BT6220", "HS1091", "HS1090"}  # alert the instant it appears with any vacancy > 0
 ALL_WATCHED = MONITORED_GN | set(THRESHOLD_COURSES) | APPEAR_COURSES
@@ -55,7 +60,7 @@ async def login(page):
 
 
 async def get_elective_courses(page):
-    """Navigate to Add/Drop → View Electives iframe and extract courses."""
+    """Navigate to Add/Drop  View Electives iframe and extract courses."""
     # Wait until __doPostBack is defined
     try:
         await page.wait_for_function("typeof __doPostBack === 'function'", timeout=15000)
@@ -64,7 +69,7 @@ async def get_elective_courses(page):
         await page.reload()
         await page.wait_for_load_state("networkidle", timeout=15000)
         await page.wait_for_function("typeof __doPostBack === 'function'", timeout=15000)
-        
+
     # Go to Add/Drop page
     await page.evaluate("__doPostBack('ctl00$AddDropCoursesLink','')")
     await page.wait_for_load_state("networkidle", timeout=30000)
@@ -164,23 +169,23 @@ def detect_changes(gs_courses, prev_state):
 
         if cno in MONITORED_GN:
             if prev_vac is None:
-                alerts.append(f"🆕 NEW GN COURSE: {cno} — {c['course_name']} | Slot: {slot} | Vacancies: {vac}")
+                alerts.append(f" NEW GN COURSE: {cno}  {c['course_name']} | Slot: {slot} | Vacancies: {vac}")
             elif prev_vac != vac:
-                alerts.append(f"🔄 GN VACANCY CHANGE: {cno} — {c['course_name']} | Slot: {slot} | {vac} (was {prev_vac})")
+                alerts.append(f" GN VACANCY CHANGE: {cno}  {c['course_name']} | Slot: {slot} | {vac} (was {prev_vac})")
 
         elif cno in APPEAR_COURSES:
             if (prev_vac is None or prev_vac == 0) and vac > 0:
-                alerts.append(f"🚨 {cno} APPEARED: {c['course_name']} | Slot: {slot} | Vacancies: {vac} — Register NOW!")
+                alerts.append(f" {cno} APPEARED: {c['course_name']} | Slot: {slot} | Vacancies: {vac}  Register NOW!")
 
         elif cno in THRESHOLD_COURSES:
             threshold = THRESHOLD_COURSES[cno]
             if vac < threshold:
                 if prev_vac is None:
-                    alerts.append(f"🚨 {cno} CRITICAL: Vacancies are {vac} (under threshold of {threshold}!)")
+                    alerts.append(f" {cno} CRITICAL: Vacancies are {vac} (under threshold of {threshold}!)")
                 elif prev_vac >= threshold:
-                    alerts.append(f"🚨 {cno} FELL BELOW THRESHOLD: Dropped to {vac} (was {prev_vac})")
+                    alerts.append(f" {cno} FELL BELOW THRESHOLD: Dropped to {vac} (was {prev_vac})")
                 elif prev_vac != vac:
-                    alerts.append(f"🚨 {cno} VACANCY UPDATE: Changed to {vac} (was {prev_vac})")
+                    alerts.append(f" {cno} VACANCY UPDATE: Changed to {vac} (was {prev_vac})")
 
     # Courses that disappeared since last check
     for state_key, prev_vac_str in prev_state.items():
@@ -193,11 +198,11 @@ def detect_changes(gs_courses, prev_state):
             prev_vac = 0
         if prev_vac > 0:
             if cno in MONITORED_GN:
-                alerts.append(f"🔄 GN FILLED: {cno} (Slot: {slot}) disappeared/filled to 0 (was {prev_vac})")
+                alerts.append(f" GN FILLED: {cno} (Slot: {slot}) disappeared/filled to 0 (was {prev_vac})")
             elif cno in THRESHOLD_COURSES and prev_vac >= THRESHOLD_COURSES[cno]:
-                alerts.append(f"🚨 {cno} FELL BELOW THRESHOLD: Filled to 0 (was {prev_vac})")
+                alerts.append(f" {cno} FELL BELOW THRESHOLD: Filled to 0 (was {prev_vac})")
             elif cno in APPEAR_COURSES:
-                alerts.append(f"🔄 {cno} FILLED: (Slot: {slot}) filled to 0 (was {prev_vac})")
+                alerts.append(f" {cno} FILLED: (Slot: {slot}) filled to 0 (was {prev_vac})")
 
     return alerts
 
@@ -216,14 +221,14 @@ def send_email_alert(subject, body):
             server.starttls()
             server.login(smtp_user, SMAIL_PASS)
             server.sendmail(smtp_user, [smtp_user], msg.as_string())
-        print("📧 Email alert sent successfully!")
+        print(" Email alert sent successfully!")
     except Exception as e:
-        print(f"⚠️ Email sending failed: {e}")
+        print(f"[WARNING] Email sending failed: {e}")
 
 
 async def main():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     if "--test-email" in sys.argv:
         print(f"[{now}] Processing test email alert...")
         subject = "IITM Course Monitor: Test Email Notification"
@@ -248,12 +253,12 @@ async def main():
 
         try:
             if not await login(page):
-                print(f"[{now}] ❌ Login failed")
+                print(f"[{now}] [FAILED] Login failed")
                 sys.exit(1)
 
             courses = await get_elective_courses(page)
             if not courses:
-                print(f"[{now}] ❌ No courses found (page may have not loaded)")
+                print(f"[{now}] [FAILED] No courses found (page may have not loaded)")
                 sys.exit(1)
 
             gs_courses = filter_gs_courses(courses)
@@ -262,18 +267,18 @@ async def main():
             new_state = save_state(gs_courses)
 
             force_email = "--force-email" in sys.argv
-            
+
             # If force-email is set, compile all current course states into an alert
             if force_email:
-                status_header = f"🔍 MANUAL STATUS CHECK — {now}"
+                status_header = f" MANUAL STATUS CHECK  {now}"
                 status_lines = []
                 for c in gs_courses:
-                    status = f"✅ {c['vacancies']}" if c['vacancies_int'] > 0 else "❌ 0"
+                    status = f"[PASSED] {c['vacancies']}" if c['vacancies_int'] > 0 else "[FAILED] 0"
                     status_lines.append(f"  {c['course_no']} | {c['course_name'][:50]} | Slot: {c['slot']} | {status}")
                 status_report = "\n".join(status_lines)
-                
+
                 # Append to alerts
-                alerts_summary = f"\n\n🚨 ACTIVE CHANGES DETECTED:\n" + "\n".join(alerts) if alerts else "\n\n(No new state changes detected since last check)"
+                alerts_summary = f"\n\n ACTIVE CHANGES DETECTED:\n" + "\n".join(alerts) if alerts else "\n\n(No new state changes detected since last check)"
                 alerts = [f"{status_header}\n\nCurrent general studies and tracked electives vacancies:\n{status_report}{alerts_summary}"]
 
             # --- OUTPUT & EMAIL ALERT ---
@@ -288,19 +293,19 @@ async def main():
                     f"Best regards,\n"
                     f"IITM Course Monitor Script"
                 )
-                print(f"🚨 COURSE MONITOR ALERT — {now}")
+                print(f" COURSE MONITOR ALERT  {now}")
                 print("=" * 60)
                 print(alert_text)
                 print("=" * 60)
                 print("Sending email alert via himalaya...")
                 send_email_alert(subject, body)
             else:
-                # No change — silent (cron won't send notification for empty output)
+                # No change  silent (cron won't send notification for empty output)
                 # But print for manual runs
                 if "--verbose" in sys.argv:
                     print(f"[{now}] No new GS courses. Total electives: {len(courses)}, GS courses: {len(gs_courses)}")
                     for c in gs_courses:
-                        status = f"✅ {c['vacancies']}" if c['vacancies_int'] > 0 else "❌ 0"
+                        status = f"[PASSED] {c['vacancies']}" if c['vacancies_int'] > 0 else "[FAILED] 0"
                         print(f"  {c['course_no']} | {c['course_name'][:55]} | Slot: {c['slot']} | {status}")
 
         finally:
