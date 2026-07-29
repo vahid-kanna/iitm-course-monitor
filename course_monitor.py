@@ -33,7 +33,7 @@ THRESHOLD_COURSES = {
     "CE5010": 10,   # alert when vacancies < 10
     "ID4101": 20,   # alert when vacancies < 20
 }
-APPEAR_COURSES = {"CE5470", "BT6220"}  # alert the instant it appears with any vacancy > 0
+APPEAR_COURSES = {"CE5470", "BT6220", "HS1091", "HS1090"}  # alert the instant it appears with any vacancy > 0
 ALL_WATCHED = MONITORED_GN | set(THRESHOLD_COURSES) | APPEAR_COURSES
 
 
